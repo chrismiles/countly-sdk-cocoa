@@ -60,7 +60,7 @@ static NSString * CLYHexStringFromData(NSData *data) {
     NSUInteger capacity = data.length * 2;
     NSMutableString *stringBuffer = [NSMutableString stringWithCapacity:capacity];
     const unsigned char *dataBuffer = data.bytes;
-    NSInteger i;
+    NSUInteger i;
     
     for (i = 0; i < data.length; ++i) {
         [stringBuffer appendFormat:@"%02lx", (long)dataBuffer[i]];
@@ -181,7 +181,7 @@ static int32_t queueCounter = 0;
     dispatch_sync(_queue, ^{
         __block BOOL identicalEventFound = NO;
         
-        [_events enumerateObjectsUsingBlock:^(CLYEvent *event, NSUInteger idx, BOOL *stop) {
+        [_events enumerateObjectsUsingBlock:^(CLYEvent *event, __unused NSUInteger idx, BOOL *stop) {
             if ([event.key
                  isEqualToString:key] && (!segmentation || [segmentation isEqualToDictionary:event.segmentation])) {
                 event.count += count;
@@ -268,7 +268,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
         
         self.networkReachabilityStatus = CLYNetworkReachabilityStatusUnknown;
         
-        self.UUID = [[[NSUserDefaults standardUserDefaults] objectForKey:@"OpenUDID"] objectForKey:@"OpenUDID"]; //legacy UDID
+        self.UUID = [(NSDictionary *)[(NSUserDefaults *)[NSUserDefaults standardUserDefaults] objectForKey:@"OpenUDID"] objectForKey:@"OpenUDID"]; //legacy UDID
         
         if (!self.UUID) {
             self.UUID = [[NSUserDefaults standardUserDefaults] objectForKey:CountlyUserDefaultsUUID];
@@ -356,7 +356,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
         if (self.sessionState == CountlySessionStateStopped) {
             request = [self urlRequestForSessionBegin];
             __weak __typeof(self)weakSelf = self;
-            callbackBlock = ^void(BOOL success, NSError *error) {
+            callbackBlock = ^void(BOOL success, __unused NSError *error) {
                 __strong __typeof(weakSelf)strongSelf = weakSelf;
                 strongSelf.sessionState = (success) ? CountlySessionStateBegan : CountlySessionStateStopped;
                 COUNTLY_LOG(@"updateSessionState (error: %@)",error);
@@ -369,7 +369,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
             COUNTLY_LOG(@"session duration: %f sec.", duration);
             request = [self urlRequestForSessionUpdateWithDuration:duration];
             __weak __typeof(self)weakSelf = self;
-            callbackBlock = ^void(BOOL success, NSError *error) {
+            callbackBlock = ^void(BOOL success, __unused NSError *error) {
                 __strong __typeof(weakSelf)strongSelf = weakSelf;
                 strongSelf.sessionState = (success) ? CountlySessionStateUpdated : CountlySessionStateBegan;
                 COUNTLY_LOG(@"updateSessionState (error: %@)",error);
@@ -387,7 +387,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
                 [[UIApplication sharedApplication] endBackgroundTask:backgroundTaskIdentifier];
             }];
 #endif
-            [NSURLConnection sendAsynchronousRequest:request  queue:self.httpOperationQueue completionHandler:^(NSURLResponse *response, NSData *data, NSError *error) {
+            [NSURLConnection sendAsynchronousRequest:request  queue:self.httpOperationQueue completionHandler:^(__unused NSURLResponse *response, __unused NSData *data, NSError *error) {
                 dispatch_async(dispatch_get_main_queue(), ^(void) {
                     if (callbackBlock) callbackBlock(!error, error);
                 });
@@ -420,7 +420,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
     }
 }
 
-- (void)sessionTimerFired:(NSTimer *)timer {
+- (void)sessionTimerFired:(__unused NSTimer *)timer {
     [self updateSessionState];
 }
 
@@ -430,10 +430,10 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
     NSParameterAssert(key);
 
 #ifdef DEBUG
-    [segmentation.allKeys enumerateObjectsWithOptions:0 usingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+    [segmentation.allKeys enumerateObjectsWithOptions:0 usingBlock:^(id obj, __unused NSUInteger idx, __unused BOOL *stop) {
         NSAssert([obj isKindOfClass:[NSString class]], @"keys of the segmentation dictionary should be NSString objects");
     }];
-    [segmentation.allValues enumerateObjectsWithOptions:0 usingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+    [segmentation.allValues enumerateObjectsWithOptions:0 usingBlock:^(id obj, __unused NSUInteger idx, __unused BOOL *stop) {
         NSAssert([obj isKindOfClass:[NSString class]] || [obj isKindOfClass:[NSNumber class]], @"keys of the segmentation dictionary should be NSString or NSNumber objects");
     }];
 #endif
@@ -447,7 +447,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
     });
 }
 
-- (void)eventStackPopTimerFired:(NSTimer *)timer {
+- (void)eventStackPopTimerFired:(__unused NSTimer *)timer {
     [self sendPendingEvents];
     self.eventStackPopTimer = nil;
 }
@@ -462,7 +462,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
         while (events.count > 0) {
             NSMutableArray *mutableArray = [NSMutableArray array];
             
-            [events enumerateObjectsWithOptions:0 usingBlock:^(CLYEvent *event, NSUInteger idx, BOOL *stop) {
+            [events enumerateObjectsWithOptions:0 usingBlock:^(CLYEvent *event, __unused NSUInteger idx, __unused BOOL *stop) {
                 NSMutableDictionary *mutableDictionary = [NSMutableDictionary dictionary];
                 [mutableDictionary setObject:event.key forKey:@"key"];
                 [mutableDictionary setObject:@(event.count) forKey:@"count"];
@@ -491,7 +491,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
             }];
 #endif
             COUNTLY_LOG(@"sendPendingEvents - start");
-            [NSURLConnection sendAsynchronousRequest:request queue:self.httpOperationQueue completionHandler:^(NSURLResponse *response, NSData *data, NSError *error) {
+            [NSURLConnection sendAsynchronousRequest:request queue:self.httpOperationQueue completionHandler:^(__unused NSURLResponse *response, __unused NSData *responseData, __unused NSError *error) {
                 COUNTLY_LOG(@"sendPendingEvents - finished (error: %@)",error);
                 // PS: if an error occurs, the events are lost. Could be improved. Note that we first check that the host is available but it's not enough,
                 // an error could occur during the request life-time.
