@@ -226,6 +226,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
 
 @interface Countly () 
 
+@property (assign, nonatomic) BOOL countlyEnabled;
 @property (nonatomic) NSTimer *sessionTimer;
 @property (nonatomic) NSTimer *eventStackPopTimer;
 @property (nonatomic) CFTimeInterval sessionsLastTime;
@@ -310,6 +311,8 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
 #pragma mark - Public Methods
 
 - (void)startWithAttributes:(NSDictionary *)attributes {
+    self.countlyEnabled = YES;
+    
     self.sessionsLastTime = CFAbsoluteTimeGetCurrent();
     
     self.appKey = attributes[CountlyAttributesAPIKey];
@@ -338,6 +341,8 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
 #pragma mark - Session Management
 
 - (void)openSession {
+    if (self.countlyEnabled == NO) return;
+    
     if (self.sessionState == CountlySessionStateStopped) {
 	// Start a new session
 	self.sessionState = CountlySessionStateBegan;
@@ -487,6 +492,8 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
 - (void)recordEvent:(NSString *)key segmentation:(NSDictionary *)segmentation count:(NSUInteger)count sum:(CGFloat)sum {
     NSParameterAssert(key);
 
+    if (self.countlyEnabled == NO) return;
+    
 #ifdef DEBUG
     [segmentation.allKeys enumerateObjectsWithOptions:0 usingBlock:^(id obj, __unused NSUInteger idx, __unused BOOL *stop) {
         NSAssert([obj isKindOfClass:[NSString class]], @"keys of the segmentation dictionary should be NSString objects");
