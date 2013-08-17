@@ -211,7 +211,7 @@ typedef NS_ENUM(NSUInteger, CountlySessionState) {
     CountlySessionStateStopped,
     CountlySessionStateBegan,
     CountlySessionStateUpdated,
-    CountlySessionStatePending
+    CountlySessionStateStopPending
 };
 
 typedef enum {
@@ -242,6 +242,9 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
 @property (nonatomic) BOOL shouldTrackSessionDuration;
 @property (nonatomic) BOOL shouldSendEventsViaWWAN;
 @property (nonatomic) NSTimeInterval sessionDurationUpdateInterval;
+@property (retain, nonatomic) NSDate *currentSessionTimeout;
+@property (assign, nonatomic) BOOL sessionUpdateRequestPending;
+
 @end
 
 @implementation Countly
@@ -313,7 +316,7 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
     self.appHost = attributes[CountlyAttributesHost];
     self.shouldTrackSessionDuration = (attributes[CountlyAttributesSessionDurationTrackingEnabled]) ? [attributes[CountlyAttributesSessionDurationTrackingEnabled]boolValue] : YES;
     self.shouldSendEventsViaWWAN = (attributes[CountlyAttributesEventsSendingViaWWANEnabled]) ? [attributes[CountlyAttributesEventsSendingViaWWANEnabled]boolValue] : YES;
-    self.sessionDurationUpdateInterval = (attributes[CountlyAttributesSessionDurationUpdateInterval]) ? [attributes[CountlyAttributesSessionDurationUpdateInterval]doubleValue] : 120.;
+    self.sessionDurationUpdateInterval = (attributes[CountlyAttributesSessionDurationUpdateInterval]) ? [attributes[CountlyAttributesSessionDurationUpdateInterval]doubleValue] : 30.;
     NSParameterAssert(self.appKey);
     NSParameterAssert(self.appHost);
     
@@ -334,50 +337,82 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
 
 #pragma mark - Session Management
 
+- (void)openSession {
+    if (self.sessionState == CountlySessionStateStopped) {
+	// Start a new session
+	self.sessionState = CountlySessionStateBegan;
+	self.sessionsLastTime = CFAbsoluteTimeGetCurrent();
+	[self updateSessionState];
+    }
+    else if (self.sessionState == CountlySessionStateStopPending) {
+	// Cancel stop pending, switch back to updated state
+	self.sessionState = CountlySessionStateUpdated;
+    }
+    
+    [self startSessionTimer];
+    [self bumpSessionTimeout];
+}
+
+- (void)bumpSessionTimeout {
+    self.currentSessionTimeout = [NSDate dateWithTimeIntervalSinceNow:self.sessionDurationUpdateInterval];
+}
+
+- (void)startSessionTimer {
+    if (self.sessionTimer == nil) {
+	self.sessionTimer = [NSTimer scheduledTimerWithTimeInterval:self.sessionDurationUpdateInterval
+							     target:self
+							   selector:@selector(sessionTimerFired:)
+							   userInfo:nil
+							    repeats:YES];
+    }
+}
+
+- (void)stopSessionTimer {
+    [self.sessionTimer invalidate];
+    self.sessionTimer = nil;
+}
+
 - (void)updateSessionState {
     BOOL stopTrackingSession = (!self.shouldTrackSessionDuration && (self.sessionState == CountlySessionStateBegan));
-
-    if (self.applicationInBackgroundState || !self.isHostReachable || stopTrackingSession) {
-        [self.sessionTimer invalidate];
-        self.sessionTimer = nil;
-    }
-    else if (!self.sessionTimer) {
-        self.sessionTimer = [NSTimer scheduledTimerWithTimeInterval:self.sessionDurationUpdateInterval target:self selector:@selector(sessionTimerFired:) userInfo:nil repeats:YES];
-    }
     
     if (stopTrackingSession) {
         return;
     }
     
-    if (self.sessionState != CountlySessionStatePending) {
+    if (self.sessionUpdateRequestPending == NO) {
         NSURLRequest *request = nil;
         void (^callbackBlock)(BOOL, NSError *) = nil;
         
-        if (self.sessionState == CountlySessionStateStopped) {
+        if (self.sessionState == CountlySessionStateBegan) {
             request = [self urlRequestForSessionBegin];
             __weak __typeof(self)weakSelf = self;
             callbackBlock = ^void(BOOL success, __unused NSError *error) {
-                __strong __typeof(weakSelf)strongSelf = weakSelf;
-                strongSelf.sessionState = (success) ? CountlySessionStateBegan : CountlySessionStateStopped;
-                COUNTLY_LOG(@"updateSessionState (error: %@)",error);
+		if (success) {
+		    __strong __typeof(weakSelf)strongSelf = weakSelf;
+		    strongSelf.sessionState = CountlySessionStateUpdated;
+		}
+		else if (error) {
+		    COUNTLY_LOG(@"session begin request error: %@",error);
+		}
             };
         }
-        else if (self.sessionState == CountlySessionStateBegan || self.sessionState == CountlySessionStateUpdated) {
+        else if (self.sessionState == CountlySessionStateUpdated || self.sessionState == CountlySessionStateStopPending) {
             CFTimeInterval lastTime = CFAbsoluteTimeGetCurrent();
             CFTimeInterval duration = round(lastTime - self.sessionsLastTime);
             self.sessionsLastTime = lastTime;
             COUNTLY_LOG(@"session duration: %f sec.", duration);
             request = [self urlRequestForSessionUpdateWithDuration:duration];
-            __weak __typeof(self)weakSelf = self;
-            callbackBlock = ^void(BOOL success, __unused NSError *error) {
-                __strong __typeof(weakSelf)strongSelf = weakSelf;
-                strongSelf.sessionState = (success) ? CountlySessionStateUpdated : CountlySessionStateBegan;
-                COUNTLY_LOG(@"updateSessionState (error: %@)",error);
+            callbackBlock = ^void(__unused BOOL success, __unused NSError *error) {
+                if (error) COUNTLY_LOG(@"updateSessionState (error: %@)",error);
             };
         }
+	else if (self.sessionState == CountlySessionStateStopped) {
+	    // Session stop requests are not sent to server - server will time out session automatically
+	    COUNTLY_LOG(@"sessionState == CountlySessionStateStopped (Session stop requests are not sent to server - server will time out session automatically)");
+	}
         
         if (request) {
-            self.sessionState = CountlySessionStatePending;
+	    self.sessionUpdateRequestPending = YES;
             
 #if defined(__IPHONE_OS_VERSION_MIN_REQUIRED)
             __block UIBackgroundTaskIdentifier backgroundTaskIdentifier = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^{
@@ -387,13 +422,17 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
                 [[UIApplication sharedApplication] endBackgroundTask:backgroundTaskIdentifier];
             }];
 #endif
+	    
             [NSURLConnection sendAsynchronousRequest:request  queue:self.httpOperationQueue completionHandler:^(__unused NSURLResponse *response, __unused NSData *data, NSError *error) {
                 dispatch_async(dispatch_get_main_queue(), ^(void) {
+		    self.sessionUpdateRequestPending = NO;
                     if (callbackBlock) callbackBlock(!error, error);
                 });
+		
 #if defined(__IPHONE_OS_VERSION_MIN_REQUIRED)
                 [[UIApplication sharedApplication] endBackgroundTask:backgroundTaskIdentifier];
 #endif
+		
             }];
         }
     }
@@ -405,23 +444,42 @@ typedef void (^CLYNetworkReachabilityStatusBlock)(CLYNetworkReachabilityStatus s
         _sessionState = sessionState;
 #ifdef DEBUG
         if (_sessionState == CountlySessionStateBegan) {
-            COUNTLY_LOG(@"session state: began");
+            COUNTLY_LOG(@"New session state: BEGAN");
         }
         if (_sessionState == CountlySessionStateUpdated) {
-            COUNTLY_LOG(@"session state: updated");
+            COUNTLY_LOG(@"New session state: UPDATED");
         }
-        else if (_sessionState == CountlySessionStatePending) {
-            COUNTLY_LOG(@"session state: pending");
+        else if (_sessionState == CountlySessionStateStopPending) {
+            COUNTLY_LOG(@"New session state: STOP PENDING");
         }
         else if (_sessionState == CountlySessionStateStopped) {
-            COUNTLY_LOG(@"session state: stopped");
+            COUNTLY_LOG(@"New session state: STOPPED");
         }
 #endif
     }
 }
 
 - (void)sessionTimerFired:(__unused NSTimer *)timer {
-    [self updateSessionState];
+    NSDate *now = [NSDate date];
+    if ([now compare:self.currentSessionTimeout] == NSOrderedDescending) {
+	// Session has timed out - server will time out session automatically
+	if (self.sessionState == CountlySessionStateStopPending) {
+	    COUNTLY_LOG(@"Session stopped due to time out");
+	    self.sessionState = CountlySessionStateStopped;
+	    [self stopSessionTimer];
+	}
+	else {
+	    // Stop is pending any further activity, which will extend the session
+	    COUNTLY_LOG(@"Session time out - stop pending any further activity");
+	    self.sessionState = CountlySessionStateStopPending;
+	    [self updateSessionState];
+	}
+    }
+    else {
+	// Session still active
+	COUNTLY_LOG(@"Session still active");
+	[self updateSessionState];
+    }
 }
 
 #pragma mark - Events Management
