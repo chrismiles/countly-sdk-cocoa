@@ -134,7 +134,7 @@ static int32_t queueCounter = 0;
 - (NSUInteger)count {
     __block NSUInteger retValue;
     dispatch_sync(_queue, ^{
-        retValue = [_events count];
+        retValue = [self->_events count];
     });
     return retValue;
 }
@@ -143,9 +143,9 @@ static int32_t queueCounter = 0;
     __block NSArray *retEvents = nil;
     
     dispatch_sync(_queue, ^{
-        if (_events.count > 0) {
-            retEvents = [_events copy];
-            [_events removeAllObjects];
+        if (self->_events.count > 0) {
+            retEvents = [self->_events copy];
+            [self->_events removeAllObjects];
         }
     });
     
@@ -158,16 +158,16 @@ static int32_t queueCounter = 0;
     __block NSArray *retEvents = nil;
     
     dispatch_sync(_queue, ^{
-        if (_events.count > 0) {
-            if (maxReturnedEvents > _events.count) {
-                retEvents = [_events copy];
-                [_events removeAllObjects];
+        if (self->_events.count > 0) {
+            if (maxReturnedEvents > self->_events.count) {
+                retEvents = [self->_events copy];
+                [self->_events removeAllObjects];
             }
             else {
                 NSSortDescriptor *sortDescriptor = [NSSortDescriptor sortDescriptorWithKey:@"timestamp" ascending:YES];
-                NSArray *sortedEvents = [_events sortedArrayUsingDescriptors:@[sortDescriptor]];
+                NSArray *sortedEvents = [self->_events sortedArrayUsingDescriptors:@[sortDescriptor]];
                 retEvents = [sortedEvents subarrayWithRange:NSMakeRange(0, maxReturnedEvents)];
-                [_events removeObjectsInArray:retEvents];
+                [self->_events removeObjectsInArray:retEvents];
             }
         }
     });
@@ -181,7 +181,7 @@ static int32_t queueCounter = 0;
     dispatch_sync(_queue, ^{
         __block BOOL identicalEventFound = NO;
         
-        [_events enumerateObjectsUsingBlock:^(CLYEvent *event, __unused NSUInteger idx, BOOL *stop) {
+        [self->_events enumerateObjectsUsingBlock:^(CLYEvent *event, __unused NSUInteger idx, BOOL *stop) {
             if ([event.key
                  isEqualToString:key] && (!segmentation || [segmentation isEqualToDictionary:event.segmentation])) {
                 event.count += count;
@@ -200,7 +200,7 @@ static int32_t queueCounter = 0;
             event.count = count;
             event.sum = sum;
             event.timestamp = time(NULL);
-            [_events addObject:event];
+            [self->_events addObject:event];
         }
     });
 }
